@@ -1,0 +1,65 @@
+@startuml palcolivre-container
+!include <C4/C4_Container>
+
+LAYOUT_WITH_LEGEND()
+title Diagrama C4 - Nível 2 (Container): Plataforma PalcoLivre
+
+Person(comprador, "Comprador", "Entra na fila virtual, escolhe assentos, paga e recebe o ingresso.")
+Person(produtor, "Produtor de eventos", "Cadastra eventos e acompanha as vendas.")
+
+System_Boundary(palco, "PalcoLivre") {
+  Container(spa, "SPA do Comprador", "React, TypeScript", "Interface web para fila virtual, escolha de assentos e pagamento.")
+  Container(app, "Aplicativo móvel", "React Native", "Mesmas funções da SPA, em iOS e Android.")
+  Container(portal, "Portal do Produtor", "React, TypeScript", "Cadastro de eventos e acompanhamento de vendas.")
+
+  Container(api, "API pública", "Node.js, API Gateway, REST", "Ponto único de entrada: autentica, aplica limite de requisições e roteia para os serviços.")
+
+  Container(fila, "Serviço de Fila Virtual", "Node.js", "Controla a entrada dos compradores na escolha de assentos, liberando lotes conforme a capacidade.")
+  Container(catalogo, "Serviço de Catálogo", "Java, Spring Boot", "Datas, locais e preços dos eventos. Muita leitura, pouca escrita.")
+  Container(reservas, "Serviço de Reservas", "Java, Spring Boot", "Reserva assento por 10 minutos, garante que nenhum assento seja vendido duas vezes e informa vendas ao produtor.")
+  Container(pagamentos, "Serviço de Pagamentos", "Java, Spring Boot", "Inicia cobranças (cartão e Pix), recebe o webhook e publica o pagamento confirmado.")
+  Container(ingressos, "Serviço de Ingressos", "Java, Spring Boot (consumidor)", "Ao receber pagamento confirmado, solicita a emissão do ingresso com QR Code e o envio por e-mail.")
+
+  ContainerDb(cache, "Cache e estado da fila", "Redis", "Cache do catálogo (TTL) e posição dos compradores na fila virtual.")
+  ContainerDb(dbcat, "Banco do Catálogo", "PostgreSQL", "Eventos, locais e preços.")
+  ContainerDb(dbres, "Banco de Reservas e Pedidos", "PostgreSQL", "Assentos, reservas com expiração, pedidos e ingressos. Restrição de unicidade por assento.")
+  ContainerQueue(broker, "Broker de mensagens", "RabbitMQ", "Filas duráveis para eventos como PagamentoConfirmado.")
+}
+
+System_Ext(gateway, "Gateway de pagamento", "Processa cartão e Pix; confirma o Pix por webhook.")
+System_Ext(emailsvc, "Serviço de ingressos e e-mail", "Gera o ingresso com QR Code e o envia por e-mail.")
+
+Rel(comprador, spa, "Compra ingressos", "HTTPS")
+Rel(comprador, app, "Compra ingressos", "App móvel")
+Rel(produtor, portal, "Gerencia eventos e vendas", "HTTPS")
+
+Rel(spa, api, "Consome a API", "HTTPS/JSON")
+Rel(app, api, "Consome a API", "HTTPS/JSON")
+Rel(portal, api, "Cadastra eventos e consulta vendas", "HTTPS/JSON")
+
+Rel(api, fila, "Entra na fila e consulta posição", "HTTP/JSON")
+Rel(api, catalogo, "Consulta e cadastra eventos", "HTTP/JSON")
+Rel(api, reservas, "Reserva assentos e consulta vendas", "HTTP/JSON")
+Rel(api, pagamentos, "Inicia pagamento", "HTTP/JSON")
+
+Rel(fila, cache, "Lê e grava posição na fila", "Protocolo Redis")
+Rel(catalogo, cache, "Lê e grava cache de eventos", "Protocolo Redis")
+Rel(catalogo, dbcat, "Lê e grava eventos", "SQL/JDBC")
+Rel(reservas, dbres, "Grava reservas e vendas", "SQL/JDBC")
+Rel(pagamentos, dbres, "Grava pedidos e status do pagamento", "SQL/JDBC")
+
+BiRel(pagamentos, gateway, "Solicita cobrança de cartão e Pix; gateway confirma o Pix por webhook", "HTTPS/JSON e webhook HTTPS")
+
+Rel(pagamentos, broker, "Publica PagamentoConfirmado", "AMQP")
+Rel(broker, reservas, "Entrega pagamento confirmado (assento vendido)", "AMQP")
+Rel(broker, ingressos, "Entrega pagamento confirmado (emitir ingresso)", "AMQP")
+Rel(ingressos, emailsvc, "Solicita geração e envio do ingresso", "HTTPS/JSON")
+Rel(emailsvc, comprador, "Envia ingresso com QR Code", "E-mail")
+
+Lay_R(pagamentos, gateway)
+Lay_R(ingressos, emailsvc)
+Lay_R(fila, catalogo)
+Lay_R(reservas, ingressos)
+
+center footer \nBroker (RabbitMQ): requisito 5. O envio do ingresso é assíncrono e a fila durável com reentrega garante que nenhum ingresso deixe de ser emitido, mesmo com atraso ou falha do serviço externo.\nCache (Redis): requisito 6. O catálogo é lido muito mais do que alterado; servir as leituras do cache alivia o banco na abertura de vendas (requisito 2).
+@enduml
